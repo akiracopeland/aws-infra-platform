@@ -1,0 +1,16 @@
+id: ecs-service
+version: 1.0.0
+inputs:
+  serviceName: { type: string, pattern: "^[a-z0-9-]+$" }
+  image:       { type: string }
+  cpu:         { type: integer, enum: [256,512,1024,2048] }
+  memory:      { type: integer, enum: [512,1024,2048,4096] }
+  desiredCount:{ type: integer, default: 2, minimum: 1 }
+  port:        { type: integer, default: 80 }
+  publicLoadBalancer: { type: boolean, default: true }
+  env:         { type: object, additionalProperties: { type: string } }
+  secrets:     { type: object, additionalProperties: { type: string } }
+outputs:
+  serviceArn: { type: string }
+  loadBalancerUrl: { type: string }
+  logGroup: { type: string }
