@@ -1,0 +1,5 @@
+ops/dev/mysql/
+node_modules/
+*.log
+dist/
+build/
