@@ -1,0 +1,31 @@
+version: "3.9"
+services:
+  db:
+    image: mysql:8.0
+    container_name: aip-mysql
+    command: --default-authentication-plugin=mysql_native_password --sql_mode=""
+    environment:
+      MYSQL_DATABASE: aws_infra_platform
+      MYSQL_USER: aip
+      MYSQL_PASSWORD: aip
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./ops/dev/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 30
+
+  redis:
+    image: redis:7
+    container_name: aip-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 30
