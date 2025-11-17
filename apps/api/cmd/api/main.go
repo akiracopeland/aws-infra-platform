@@ -15,6 +15,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
+
+	handlers "github.com/your-org/aws-infra-platform/apps/api/internal/handlers"
 )
 
 func main() {
@@ -38,7 +40,18 @@ func main() {
 		user := c.GetString("user_email")
 		roles := c.GetStringSlice("roles")
 		c.JSON(200, gin.H{"email": user, "roles": roles})
+
 	})
+
+	deps := &handlers.ServerDeps{
+		DB:  db,
+		RDB: rdb,
+	}
+
+	api := r.Group("/v1")
+	{
+		api.POST("/deployments", deps.CreateDeployment)
+	}
 
 	// TODO: wire handlers (connections, blueprints, deployments)
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}

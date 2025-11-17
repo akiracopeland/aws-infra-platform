@@ -3,9 +3,17 @@ module github.com/your-org/aws-infra-platform/apps/api
 go 1.25.4
 
 require (
+	github.com/aws/aws-sdk-go-v2/config v1.31.20
+	github.com/aws/aws-sdk-go-v2/service/sts v1.40.2
+	github.com/gin-gonic/gin v1.11.0
+	github.com/go-sql-driver/mysql v1.9.3
+	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/redis/go-redis/v9 v9.16.0
+)
+
+require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.39.6 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.31.20 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.24 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.13 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.13 // indirect
@@ -15,7 +23,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.40.2 // indirect
 	github.com/aws/smithy-go v1.23.2 // indirect
 	github.com/bytedance/sonic v1.14.0 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
@@ -24,14 +31,11 @@ require (
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
-	github.com/gin-gonic/gin v1.11.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
-	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
@@ -41,7 +45,6 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.0 // indirect
-	github.com/redis/go-redis/v9 v9.16.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect
