@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
@@ -33,6 +34,16 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
+
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
 
 	r.Use(JWTMiddleware(cfg))
