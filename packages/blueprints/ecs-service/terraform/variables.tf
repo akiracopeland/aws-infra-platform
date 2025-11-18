@@ -1,0 +1,12 @@
+variable "service_name" { type = string }
+variable "container_image" { type = string }
+variable "cpu" { type = number }
+variable "memory" { type = number }
+variable "desired_count" { type = number }
+variable "port" { type = number }
+variable "public_lb" { type = bool }
+variable "env" { type = map(string) }
+variable "secrets" { type = map(string) }
+variable "vpc_id" { type = string }
+variable "subnet_ids" { type = list(string) }
+variable "security_group_ids" { type = list(string) }
