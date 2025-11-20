@@ -1,0 +1,44 @@
+name: Infra CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-ci.yml"
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-ci.yml"
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        dir:
+          - infra/platform
+          - infra/target-dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform fmt check
+        working-directory: ${{ matrix.dir }}
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        working-directory: ${{ matrix.dir }}
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        working-directory: ${{ matrix.dir }}
+        run: terraform validate -no-color
