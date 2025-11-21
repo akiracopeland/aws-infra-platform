@@ -62,6 +62,7 @@ func main() {
 	api := r.Group("/v1")
 	{
 		api.POST("/deployments", deps.CreateDeployment)
+		api.GET("/runs/:id", deps.GetRun)
 	}
 
 	// TODO: wire handlers (connections, blueprints, deployments)
