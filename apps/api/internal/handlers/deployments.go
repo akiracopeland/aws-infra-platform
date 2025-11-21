@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	redis "github.com/redis/go-redis/v9"
 )
@@ -41,6 +43,7 @@ type CreateDeploymentReq struct {
 		ExternalID string `json:"externalId" binding:"required"`
 		Region     string `json:"region" binding:"required"`
 	} `json:"aws"`
+	Action string `json:"action"` // "plan" or "apply" (optional, defaults to "plan")
 }
 
 func (d *ServerDeps) CreateDeployment(c *gin.Context) {
@@ -49,6 +52,16 @@ func (d *ServerDeps) CreateDeployment(c *gin.Context) {
 	var req CreateDeploymentReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Normalize & validate action
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "" {
+		action = "plan"
+	}
+	if action != "plan" && action != "apply" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid action; must be 'plan' or 'apply'"})
 		return
 	}
 
@@ -110,7 +123,7 @@ func (d *ServerDeps) CreateDeployment(c *gin.Context) {
 		return
 	}
 
-	// 3) Insert into runs (action=plan, status=queued)
+	// 3) Insert into runs (action from request, status=queued)
 	res, err = tx.ExecContext(ctx, `
 		INSERT INTO runs (
 			deployment_id,
@@ -120,9 +133,10 @@ func (d *ServerDeps) CreateDeployment(c *gin.Context) {
 			summary,
 			started_at,
 			finished_at
-		) VALUES (?, 'plan', 'queued', NULL, NULL, NULL, NULL)
+		) VALUES (?, ?, 'queued', NULL, NULL, NULL, NULL)
 	`,
 		deploymentID,
+		action,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to insert run: " + err.Error()})
@@ -144,7 +158,7 @@ func (d *ServerDeps) CreateDeployment(c *gin.Context) {
 	// 5) Enqueue job with the real runID
 	job := map[string]any{
 		"run_id":        runID,
-		"action":        "plan",
+		"action":        action,
 		"blueprint_key": req.BlueprintKey,
 		"version":       req.Version,
 		"inputs":        req.Inputs,

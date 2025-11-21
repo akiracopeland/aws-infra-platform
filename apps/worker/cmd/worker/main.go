@@ -106,6 +106,8 @@ func handleJob(ctx context.Context, job *Job) error {
 	switch job.Action {
 	case "plan":
 		return runTerraformPlan(ctx, job)
+	case "apply":
+		return runTerraformApply(ctx, job)
 	default:
 		log.Printf("unsupported action %q, skipping", job.Action)
 		return nil
@@ -152,6 +154,51 @@ func runTerraformPlan(ctx context.Context, job *Job) error {
 	args := append([]string{"plan", "-input=false", "-no-color"}, varArgs...)
 	if err := runTerraformCmd(tctx, modulePath, env, args...); err != nil {
 		return fmt.Errorf("terraform plan failed: %w", err)
+	}
+
+	return nil
+}
+
+func runTerraformApply(ctx context.Context, job *Job) error {
+	modulePath, err := modulePathFor(job.BlueprintKey)
+	if err != nil {
+		return err
+	}
+
+	// Assume role for this job (using values from job.AWS)
+	creds, err := assumeRoleForJob(ctx, job)
+	if err != nil {
+		return fmt.Errorf("assume role failed: %w", err)
+	}
+
+	env := []string{
+		"AWS_ACCESS_KEY_ID=" + creds.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY=" + creds.SecretAccessKey,
+		"AWS_SESSION_TOKEN=" + creds.SessionToken,
+		"AWS_REGION=" + creds.Region,
+	}
+
+	log.Printf("run %d: running terraform apply in %s as assumed role in region %s", job.RunID, modulePath, creds.Region)
+
+	// Context with timeout for terraform commands
+	tctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	// 1) terraform init
+	if err := runTerraformCmd(tctx, modulePath, env, "init", "-input=false", "-no-color"); err != nil {
+		return fmt.Errorf("terraform init failed: %w", err)
+	}
+
+	// Build -var arguments from job.Inputs
+	varArgs := []string{}
+	for k, v := range job.Inputs {
+		varArgs = append(varArgs, "-var", fmt.Sprintf("%s=%v", k, v))
+	}
+
+	// 2) terraform apply -auto-approve
+	args := append([]string{"apply", "-input=false", "-auto-approve", "-no-color"}, varArgs...)
+	if err := runTerraformCmd(tctx, modulePath, env, args...); err != nil {
+		return fmt.Errorf("terraform apply failed: %w", err)
 	}
 
 	return nil

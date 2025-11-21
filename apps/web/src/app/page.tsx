@@ -86,7 +86,7 @@ export default function Home() {
   const [deploymentsError, setDeploymentsError] = useState<string | null>(null);
   const [loadingDeployments, setLoadingDeployments] = useState(false);
 
-  async function handleDeploy() {
+    async function handleDeploy() {
     setLoading(true);
     setError(null);
     setResult(null);
@@ -108,6 +108,7 @@ export default function Home() {
             blueprintKey: "ecs-service",
             version: "1.0.0",
             environmentId: 1,
+            action: "plan",
             inputs: {
               serviceName,
               image,
@@ -139,6 +140,62 @@ export default function Home() {
       setLoading(false);
     }
   }
+
+    async function handleApply() {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+
+    const conn = connections.find((c) => c.id === selectedConnectionId);
+    if (!conn) {
+      setError("Please select an AWS connection before deploying.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE}/v1/deployments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            blueprintKey: "ecs-service",
+            version: "1.0.0",
+            environmentId: 1,
+            action: "apply",
+            inputs: {
+              serviceName,
+              image,
+              cpu: 256,
+              memory: 512,
+            },
+            aws: {
+              roleArn: conn.roleArn,
+              externalId: conn.externalId,
+              region: conn.region,
+            },
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API error ${res.status}: ${text}`);
+      }
+
+      const json = (await res.json()) as DeployResponse;
+      setResult(json);
+
+      // Refresh deployments list after a new deployment
+      void loadDeployments();
+    } catch (err: any) {
+      setError(err.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
 
   async function loadConnections() {
     setLoadingConnections(true);
@@ -289,13 +346,25 @@ export default function Home() {
             fullWidth
           />
 
-          <Button
-            variant="contained"
-            onClick={handleDeploy}
-            disabled={loading}
-          >
-            {loading ? "Deploying..." : "Deploy ECS Service (Plan)"}
-          </Button>
+          <Box sx={{ display: "flex", gap: 2 }}>
+            <Button
+              variant="contained"
+              onClick={handleDeploy}
+              disabled={loading}
+            >
+              {loading ? "Deploying..." : "Plan ECS Service"}
+            </Button>
+
+            <Button
+              variant="outlined"
+              color="secondary"
+              onClick={handleApply}
+              disabled={loading}
+            >
+              {loading ? "Applying..." : "Apply ECS Service"}
+            </Button>
+          </Box>
+
         </Box>
 
         {error && (

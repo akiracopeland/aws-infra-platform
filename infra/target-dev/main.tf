@@ -68,3 +68,29 @@ output "deploy_role_arn" {
 output "external_id" {
   value = "aip-dev-external-id"
 }
+
+resource "aws_iam_role_policy" "aip_allow_task_execution_role" {
+  name = "aip-allow-task-execution-role"
+  role = aws_iam_role.aip_target_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "iam:CreateRole",
+          "iam:DeleteRole",
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:PassRole",
+          "iam:GetRole",
+          "iam:ListRolePolicies",
+          "iam:GetRolePolicy",
+          "iam:ListInstanceProfilesForRole"
+        ],
+        Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/demo-service-execution"
+      }
+    ]
+  })
+}
