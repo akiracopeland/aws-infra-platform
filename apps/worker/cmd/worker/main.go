@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	_ "github.com/go-sql-driver/mysql"
 	redis "github.com/redis/go-redis/v9"
 )
@@ -21,7 +23,14 @@ type Job struct {
 	BlueprintKey string            `json:"blueprint_key"`
 	Version      string            `json:"version"`
 	Inputs       map[string]any    `json:"inputs"`
-	AWS          map[string]string `json:"aws"`
+	AWS          map[string]string `json:"aws"` // expects roleArn, externalId, region
+}
+
+type AWSCredentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	Region          string
 }
 
 func main() {
@@ -79,7 +88,7 @@ func main() {
 			log.Printf("failed to mark run %d running: %v", job.RunID, err)
 		}
 
-		if err := handleJob(ctx, &job, db); err != nil {
+		if err := handleJob(ctx, &job); err != nil {
 			log.Printf("job %d failed: %v", job.RunID, err)
 			if err2 := markRunFailed(ctx, db, job.RunID, err.Error()); err2 != nil {
 				log.Printf("failed to mark run %d failed: %v", job.RunID, err2)
@@ -93,7 +102,7 @@ func main() {
 	}
 }
 
-func handleJob(ctx context.Context, job *Job, db *sql.DB) error {
+func handleJob(ctx context.Context, job *Job) error {
 	switch job.Action {
 	case "plan":
 		return runTerraformPlan(ctx, job)
@@ -109,37 +118,52 @@ func runTerraformPlan(ctx context.Context, job *Job) error {
 		return err
 	}
 
-	log.Printf("run %d: running terraform plan in %s", job.RunID, modulePath)
+	// Assume role for this job (using values from job.AWS)
+	creds, err := assumeRoleForJob(ctx, job)
+	if err != nil {
+		return fmt.Errorf("assume role failed: %w", err)
+	}
 
-	// Create a context with timeout for terraform commands
+	env := []string{
+		"AWS_ACCESS_KEY_ID=" + creds.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY=" + creds.SecretAccessKey,
+		"AWS_SESSION_TOKEN=" + creds.SessionToken,
+		"AWS_REGION=" + creds.Region,
+	}
+
+	log.Printf("run %d: running terraform plan in %s as assumed role in region %s", job.RunID, modulePath, creds.Region)
+
+	// Context with timeout for terraform commands
 	tctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	// 1) terraform init
-	if err := runTerraformCmd(tctx, modulePath, "init", "-input=false", "-no-color"); err != nil {
+	if err := runTerraformCmd(tctx, modulePath, env, "init", "-input=false", "-no-color"); err != nil {
 		return fmt.Errorf("terraform init failed: %w", err)
 	}
 
 	// Build -var arguments from job.Inputs
 	varArgs := []string{}
 	for k, v := range job.Inputs {
-		// we rely on the module variable names matching the JSON keys
 		varArgs = append(varArgs, "-var", fmt.Sprintf("%s=%v", k, v))
 	}
 
 	// 2) terraform plan
 	args := append([]string{"plan", "-input=false", "-no-color"}, varArgs...)
-	if err := runTerraformCmd(tctx, modulePath, args...); err != nil {
+	if err := runTerraformCmd(tctx, modulePath, env, args...); err != nil {
 		return fmt.Errorf("terraform plan failed: %w", err)
 	}
 
 	return nil
 }
 
-func runTerraformCmd(ctx context.Context, modulePath string, args ...string) error {
+func runTerraformCmd(ctx context.Context, modulePath string, extraEnv []string, args ...string) error {
 	// We use -chdir so we don't have to change the worker's working directory
 	allArgs := append([]string{"-chdir=" + modulePath}, args...)
 	cmd := exec.CommandContext(ctx, "terraform", allArgs...)
+
+	// Process environment: inherit + override AWS credentials
+	cmd.Env = append(os.Environ(), extraEnv...)
 
 	// Stream terraform stdout/stderr into worker logs
 	cmd.Stdout = os.Stdout
@@ -171,6 +195,53 @@ func getEnv(k, def string) string {
 	}
 	return def
 }
+
+// ---- AssumeRole helpers ---------------------------------------------------
+
+func assumeRoleForJob(ctx context.Context, job *Job) (*AWSCredentials, error) {
+	roleArn := job.AWS["roleArn"]
+	externalID := job.AWS["externalId"]
+	region := job.AWS["region"]
+	if region == "" {
+		region = "ap-northeast-1"
+	}
+
+	if roleArn == "" || externalID == "" {
+		return nil, fmt.Errorf("missing roleArn or externalId in job.AWS")
+	}
+
+	// Load platform credentials (from AWS_PROFILE / env)
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	if err != nil {
+		return nil, fmt.Errorf("load default AWS config: %w", err)
+	}
+
+	stsClient := sts.NewFromConfig(cfg)
+
+	dur := int32(3600)
+	out, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
+		RoleArn:         &roleArn,
+		RoleSessionName: awsString(fmt.Sprintf("aip-run-%d", job.RunID)),
+		ExternalId:      &externalID,
+		DurationSeconds: &dur,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("STS AssumeRole error: %w", err)
+	}
+
+	if out.Credentials == nil {
+		return nil, fmt.Errorf("STS AssumeRole returned nil credentials")
+	}
+
+	return &AWSCredentials{
+		AccessKeyID:     *out.Credentials.AccessKeyId,
+		SecretAccessKey: *out.Credentials.SecretAccessKey,
+		SessionToken:    *out.Credentials.SessionToken,
+		Region:          region,
+	}, nil
+}
+
+func awsString(s string) *string { return &s }
 
 // ---- run status helpers ---------------------------------------------------
 
