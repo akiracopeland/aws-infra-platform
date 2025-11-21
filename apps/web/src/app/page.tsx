@@ -40,6 +40,15 @@ export default function Home() {
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
   const [loadingConnections, setLoadingConnections] = useState(false);
 
+  // Add-connection form state
+  const [newRoleArn, setNewRoleArn] = useState("");
+  const [newExternalId, setNewExternalId] = useState("");
+  const [newRegion, setNewRegion] = useState("ap-northeast-1");
+  const [newNickname, setNewNickname] = useState("");
+  const [creatingConnection, setCreatingConnection] = useState(false);
+  const [createConnectionError, setCreateConnectionError] = useState<string | null>(null);
+  const [createConnectionSuccess, setCreateConnectionSuccess] = useState<string | null>(null);
+
   async function handleDeploy() {
     setLoading(true);
     setError(null);
@@ -108,6 +117,48 @@ export default function Home() {
     }
   }
 
+  async function handleAddConnection() {
+    setCreatingConnection(true);
+    setCreateConnectionError(null);
+    setCreateConnectionSuccess(null);
+
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE}/v1/connections/aws`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            roleArn: newRoleArn,
+            externalId: newExternalId,
+            region: newRegion,
+            nickname: newNickname || undefined,
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API error ${res.status}: ${text}`);
+      }
+
+      const created = (await res.json()) as AwsConnection;
+
+      // Prepend new connection to the list
+      setConnections((prev) => [created, ...prev]);
+      setCreateConnectionSuccess("AWS connection created successfully");
+
+      // Clear form fields (keep region default)
+      setNewRoleArn("");
+      setNewExternalId("");
+      setNewNickname("");
+    } catch (err: any) {
+      setCreateConnectionError(err.message || "Failed to create connection");
+    } finally {
+      setCreatingConnection(false);
+    }
+  }
+
   return (
     <>
       <CssBaseline />
@@ -116,6 +167,7 @@ export default function Home() {
           AWSInfraPlatform – ECS Service Deploy (MVP)
         </Typography>
 
+        {/* Deploy form */}
         <Box
           component="form"
           noValidate
@@ -164,6 +216,61 @@ export default function Home() {
             AWS Connections
           </Typography>
 
+          {/* Add AWS Connection form */}
+          <Box
+            sx={{
+              mt: 2,
+              mb: 3,
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+            }}
+          >
+            <TextField
+              label="Role ARN"
+              placeholder="arn:aws:iam::882573817622:role/aip-target-deploy"
+              value={newRoleArn}
+              onChange={(e) => setNewRoleArn(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="External ID"
+              placeholder="aip-dev-external-id"
+              value={newExternalId}
+              onChange={(e) => setNewExternalId(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Region"
+              value={newRegion}
+              onChange={(e) => setNewRegion(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Nickname (optional)"
+              placeholder="dev-target"
+              value={newNickname}
+              onChange={(e) => setNewNickname(e.target.value)}
+              fullWidth
+            />
+
+            <Button
+              variant="contained"
+              onClick={handleAddConnection}
+              disabled={creatingConnection}
+            >
+              {creatingConnection ? "Creating..." : "Add AWS Connection"}
+            </Button>
+
+            {createConnectionError && (
+              <Alert severity="error">{createConnectionError}</Alert>
+            )}
+            {createConnectionSuccess && (
+              <Alert severity="success">{createConnectionSuccess}</Alert>
+            )}
+          </Box>
+
+          {/* List / refresh button */}
           <Button
             variant="outlined"
             onClick={loadConnections}
@@ -213,8 +320,8 @@ export default function Home() {
                 color="text.secondary"
                 sx={{ mt: 2 }}
               >
-                No connections loaded yet. Click &quot;Load AWS Connections&quot; to
-                fetch.
+                No connections loaded yet. Create one above or click &quot;Load
+                AWS Connections&quot; to fetch existing ones.
               </Typography>
             )}
         </Box>
