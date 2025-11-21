@@ -20,12 +20,13 @@ type CreateAWSConnectionReq struct {
 }
 
 type AWSConnectionResp struct {
-	ID        int64  `json:"id"`
-	OrgID     int64  `json:"orgId"`
-	AccountID string `json:"accountId"`
-	RoleArn   string `json:"roleArn"`
-	Region    string `json:"region"`
-	Nickname  string `json:"nickname,omitempty"`
+	ID         int64  `json:"id"`
+	OrgID      int64  `json:"orgId"`
+	AccountID  string `json:"accountId"`
+	RoleArn    string `json:"roleArn"`
+	ExternalID string `json:"externalId"`
+	Region     string `json:"region"`
+	Nickname   string `json:"nickname,omitempty"`
 }
 
 var roleArnRE = regexp.MustCompile(`^arn:aws:iam::([0-9]{12}):role\/.+$`)
@@ -96,12 +97,13 @@ func (d *ServerDeps) CreateAWSConnection(c *gin.Context) {
 	}
 
 	resp := AWSConnectionResp{
-		ID:        id,
-		OrgID:     orgID,
-		AccountID: accountID,
-		RoleArn:   req.RoleArn,
-		Region:    req.Region,
-		Nickname:  req.Nickname,
+		ID:         id,
+		OrgID:      orgID,
+		AccountID:  accountID,
+		RoleArn:    req.RoleArn,
+		ExternalID: req.ExternalID,
+		Region:     req.Region,
+		Nickname:   req.Nickname,
 	}
 
 	c.JSON(http.StatusCreated, resp)
@@ -115,7 +117,7 @@ func (d *ServerDeps) ListAWSConnections(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	rows, err := d.DB.QueryContext(ctx, `
-        SELECT id, org_id, account_id, role_arn, region, nickname
+        SELECT id, org_id, account_id, role_arn, external_id, region, nickname
         FROM aws_connections
         WHERE org_id = ?
         ORDER BY created_at DESC
@@ -137,6 +139,7 @@ func (d *ServerDeps) ListAWSConnections(c *gin.Context) {
 			&conn.OrgID,
 			&conn.AccountID,
 			&conn.RoleArn,
+			&conn.ExternalID,
 			&conn.Region,
 			&nickname,
 		); err != nil {

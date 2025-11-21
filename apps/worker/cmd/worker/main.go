@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	redis "github.com/redis/go-redis/v9"
 )
 
@@ -23,9 +25,23 @@ type Job struct {
 }
 
 func main() {
-	addr := getEnv("REDIS_ADDR", "127.0.0.1:6379")
-	rdb := redis.NewClient(&redis.Options{Addr: addr})
+	redisAddr := getEnv("REDIS_ADDR", "127.0.0.1:6379")
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	defer rdb.Close()
+
+	// DB for updating runs table
+	dsn := getEnv("MYSQL_DSN", "aip:aip@tcp(127.0.0.1:3306)/aws_infra_platform?parseTime=true&multiStatements=true")
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatalf("failed to open db: %v", err)
+	}
+	db.SetConnMaxLifetime(3 * time.Minute)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(10)
+	if err := db.Ping(); err != nil {
+		log.Fatalf("db ping failed: %v", err)
+	}
+	defer db.Close()
 
 	ctx := context.Background()
 
@@ -33,7 +49,7 @@ func main() {
 		log.Fatalf("redis ping failed: %v", err)
 	}
 
-	log.Printf("worker listening on queue aip:jobs (redis=%s)", addr)
+	log.Printf("worker listening on queue aip:jobs (redis=%s)", redisAddr)
 
 	for {
 		res, err := rdb.BLPop(ctx, 5*time.Second, "aip:jobs").Result()
@@ -58,15 +74,26 @@ func main() {
 
 		log.Printf("job: run=%d action=%s blueprint=%s@%s", job.RunID, job.Action, job.BlueprintKey, job.Version)
 
-		if err := handleJob(ctx, &job); err != nil {
+		// Mark run as running
+		if err := markRunRunning(ctx, db, job.RunID); err != nil {
+			log.Printf("failed to mark run %d running: %v", job.RunID, err)
+		}
+
+		if err := handleJob(ctx, &job, db); err != nil {
 			log.Printf("job %d failed: %v", job.RunID, err)
+			if err2 := markRunFailed(ctx, db, job.RunID, err.Error()); err2 != nil {
+				log.Printf("failed to mark run %d failed: %v", job.RunID, err2)
+			}
 		} else {
 			log.Printf("job %d completed successfully", job.RunID)
+			if err := markRunSucceeded(ctx, db, job.RunID); err != nil {
+				log.Printf("failed to mark run %d succeeded: %v", job.RunID, err)
+			}
 		}
 	}
 }
 
-func handleJob(ctx context.Context, job *Job) error {
+func handleJob(ctx context.Context, job *Job, db *sql.DB) error {
 	switch job.Action {
 	case "plan":
 		return runTerraformPlan(ctx, job)
@@ -143,4 +170,46 @@ func getEnv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// ---- run status helpers ---------------------------------------------------
+
+func markRunRunning(ctx context.Context, db *sql.DB, runID int64) error {
+	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err := db.ExecContext(ctx2, `
+        UPDATE runs
+        SET status = 'running',
+            started_at = IFNULL(started_at, NOW())
+        WHERE id = ?
+    `, runID)
+	return err
+}
+
+func markRunSucceeded(ctx context.Context, db *sql.DB, runID int64) error {
+	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err := db.ExecContext(ctx2, `
+        UPDATE runs
+        SET status = 'succeeded',
+            finished_at = IFNULL(finished_at, NOW())
+        WHERE id = ?
+    `, runID)
+	return err
+}
+
+func markRunFailed(ctx context.Context, db *sql.DB, runID int64, summary string) error {
+	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err := db.ExecContext(ctx2, `
+        UPDATE runs
+        SET status = 'failed',
+            summary = ?,
+            finished_at = NOW()
+        WHERE id = ?
+    `, summary, runID)
+	return err
 }

@@ -12,6 +12,7 @@ import {
   Card,
   CardContent,
   Stack,
+  MenuItem,
 } from "@mui/material";
 
 type DeployResponse = {
@@ -25,8 +26,19 @@ type AwsConnection = {
   orgId: number;
   accountId: string;
   roleArn: string;
+  externalId: string;
   region: string;
   nickname?: string;
+};
+
+type RunStatusResponse = {
+  id: number;
+  deploymentId: number;
+  action: string;
+  status: string;
+  startedAt?: string;
+  finishedAt?: string;
+  summary?: string;
 };
 
 export default function Home() {
@@ -39,6 +51,7 @@ export default function Home() {
   const [connections, setConnections] = useState<AwsConnection[]>([]);
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
   const [loadingConnections, setLoadingConnections] = useState(false);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<number | null>(null);
 
   // Add-connection form state
   const [newRoleArn, setNewRoleArn] = useState("");
@@ -49,10 +62,23 @@ export default function Home() {
   const [createConnectionError, setCreateConnectionError] = useState<string | null>(null);
   const [createConnectionSuccess, setCreateConnectionSuccess] = useState<string | null>(null);
 
+  // Run status UI state
+  const [runIdQuery, setRunIdQuery] = useState("");
+  const [runStatus, setRunStatus] = useState<RunStatusResponse | null>(null);
+  const [runStatusError, setRunStatusError] = useState<string | null>(null);
+  const [runStatusLoading, setRunStatusLoading] = useState(false);
+
   async function handleDeploy() {
     setLoading(true);
     setError(null);
     setResult(null);
+
+    const conn = connections.find((c) => c.id === selectedConnectionId);
+    if (!conn) {
+      setError("Please select an AWS connection before deploying.");
+      setLoading(false);
+      return;
+    }
 
     try {
       const res = await fetch(
@@ -71,10 +97,9 @@ export default function Home() {
               memory: 512,
             },
             aws: {
-              // TODO: later, pick this from a selected connection instead of hardcoding
-              roleArn: "arn:aws:iam::123456789012:role/YourTargetRole",
-              externalId: "example-external-id",
-              region: "ap-northeast-1",
+              roleArn: conn.roleArn,
+              externalId: conn.externalId,
+              region: conn.region,
             },
           }),
         }
@@ -110,6 +135,10 @@ export default function Home() {
 
       const json = (await res.json()) as AwsConnection[];
       setConnections(json);
+
+      if (json.length > 0 && selectedConnectionId === null) {
+        setSelectedConnectionId(json[0].id);
+      }
     } catch (err: any) {
       setConnectionsError(err.message || "Failed to load connections");
     } finally {
@@ -144,11 +173,10 @@ export default function Home() {
 
       const created = (await res.json()) as AwsConnection;
 
-      // Prepend new connection to the list
       setConnections((prev) => [created, ...prev]);
+      setSelectedConnectionId(created.id);
       setCreateConnectionSuccess("AWS connection created successfully");
 
-      // Clear form fields (keep region default)
       setNewRoleArn("");
       setNewExternalId("");
       setNewNickname("");
@@ -156,6 +184,37 @@ export default function Home() {
       setCreateConnectionError(err.message || "Failed to create connection");
     } finally {
       setCreatingConnection(false);
+    }
+  }
+
+  async function handleCheckRunStatus() {
+    setRunStatusLoading(true);
+    setRunStatusError(null);
+    setRunStatus(null);
+
+    const id = runIdQuery.trim();
+    if (!id) {
+      setRunStatusError("Please enter a Run ID.");
+      setRunStatusLoading(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE}/v1/runs/${encodeURIComponent(id)}`
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API error ${res.status}: ${text}`);
+      }
+
+      const json = (await res.json()) as RunStatusResponse;
+      setRunStatus(json);
+    } catch (err: any) {
+      setRunStatusError(err.message || "Failed to fetch run status");
+    } finally {
+      setRunStatusLoading(false);
     }
   }
 
@@ -270,7 +329,30 @@ export default function Home() {
             )}
           </Box>
 
-          {/* List / refresh button */}
+          {/* Select connection */}
+          <Box sx={{ mb: 2 }}>
+            <TextField
+              select
+              fullWidth
+              label="Selected AWS Connection"
+              value={selectedConnectionId ?? ""}
+              onChange={(e) =>
+                setSelectedConnectionId(
+                  e.target.value === "" ? null : Number(e.target.value)
+                )
+              }
+              helperText="This connection will be used for deployments"
+            >
+              {connections.map((conn) => (
+                <MenuItem key={conn.id} value={conn.id}>
+                  {conn.nickname || "(no nickname)"} — {conn.accountId} (
+                  {conn.region})
+                </MenuItem>
+              ))}
+            </TextField>
+          </Box>
+
+          {/* Load connections + list */}
           <Button
             variant="outlined"
             onClick={loadConnections}
@@ -306,6 +388,13 @@ export default function Home() {
                     >
                       Role ARN: {conn.roleArn}
                     </Typography>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ mt: 1 }}
+                    >
+                      External ID: {conn.externalId}
+                    </Typography>
                   </CardContent>
                 </Card>
               ))}
@@ -324,6 +413,75 @@ export default function Home() {
                 AWS Connections&quot; to fetch existing ones.
               </Typography>
             )}
+        </Box>
+
+        {/* Run Status section */}
+        <Box sx={{ mt: 6, mb: 8 }}>
+          <Typography variant="h5" gutterBottom>
+            Run Status
+          </Typography>
+
+          <Box
+            sx={{
+              mt: 2,
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+            }}
+          >
+            <TextField
+              label="Run ID"
+              value={runIdQuery}
+              onChange={(e) => setRunIdQuery(e.target.value)}
+              fullWidth
+            />
+            <Button
+              variant="outlined"
+              onClick={handleCheckRunStatus}
+              disabled={runStatusLoading}
+            >
+              {runStatusLoading ? "Checking..." : "Check Run Status"}
+            </Button>
+
+            {runStatusError && (
+              <Alert severity="error">{runStatusError}</Alert>
+            )}
+
+            {runStatus && (
+              <Card>
+                <CardContent>
+                  <Typography variant="subtitle1">
+                    Run #{runStatus.id} – {runStatus.status}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Deployment ID: {runStatus.deploymentId}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Action: {runStatus.action}
+                  </Typography>
+                  {runStatus.startedAt && (
+                    <Typography variant="body2" color="text.secondary">
+                      Started: {runStatus.startedAt}
+                    </Typography>
+                  )}
+                  {runStatus.finishedAt && (
+                    <Typography variant="body2" color="text.secondary">
+                      Finished: {runStatus.finishedAt}
+                    </Typography>
+                  )}
+                  {runStatus.summary && (
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ mt: 1, whiteSpace: "pre-wrap" }}
+                    >
+                      Summary: {runStatus.summary}
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </Box>
         </Box>
       </Container>
     </>
