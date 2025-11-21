@@ -64,6 +64,7 @@ func main() {
 		api.POST("/deployments", deps.CreateDeployment)
 		api.GET("/runs/:id", deps.GetRun)
 		api.POST("/connections/aws", deps.CreateAWSConnection)
+		api.GET("/connections/aws", deps.ListAWSConnections)
 	}
 
 	// TODO: wire handlers (connections, blueprints, deployments)
