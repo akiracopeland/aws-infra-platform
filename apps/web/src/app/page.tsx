@@ -52,6 +52,8 @@ type DeploymentSummary = {
   lastRunStatus?: string;
   lastRunStartedAt?: string;
   lastRunFinishedAt?: string;
+  // Raw terraform outputs JSON (terraform output -json)
+  outputsJson?: any;
 };
 
 export default function Home() {
@@ -86,7 +88,7 @@ export default function Home() {
   const [deploymentsError, setDeploymentsError] = useState<string | null>(null);
   const [loadingDeployments, setLoadingDeployments] = useState(false);
 
-    async function handleDeploy() {
+  async function handleDeploy() {
     setLoading(true);
     setError(null);
     setResult(null);
@@ -141,7 +143,7 @@ export default function Home() {
     }
   }
 
-    async function handleApply() {
+  async function handleApply() {
     setLoading(true);
     setError(null);
     setResult(null);
@@ -195,7 +197,6 @@ export default function Home() {
       setLoading(false);
     }
   }
-
 
   async function loadConnections() {
     setLoadingConnections(true);
@@ -364,7 +365,6 @@ export default function Home() {
               {loading ? "Applying..." : "Apply ECS Service"}
             </Button>
           </Box>
-
         </Box>
 
         {error && (
@@ -619,41 +619,72 @@ export default function Home() {
 
           {deployments.length > 0 && (
             <Stack spacing={2} sx={{ mt: 2 }}>
-              {deployments.map((dep) => (
-                <Card key={dep.id}>
-                  <CardContent>
-                    <Typography variant="subtitle1">
-                      Deployment #{dep.id} – {dep.blueprintKey} @ {dep.version}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Environment ID: {dep.environmentId}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Deployment status: {dep.status}
-                    </Typography>
+              {deployments.map((dep) => {
+                const outputs = dep.outputsJson as any | undefined;
 
-                    {dep.lastRunId && (
-                      <Typography variant="body2" color="text.secondary">
-                        Last run: #{dep.lastRunId} ({dep.lastRunStatus ?? "unknown"})
-                      </Typography>
-                    )}
-                    {dep.lastRunStartedAt && (
-                      <Typography variant="body2" color="text.secondary">
-                        Last run started: {dep.lastRunStartedAt}
-                      </Typography>
-                    )}
-                    {dep.lastRunFinishedAt && (
-                      <Typography variant="body2" color="text.secondary">
-                        Last run finished: {dep.lastRunFinishedAt}
-                      </Typography>
-                    )}
+                const serviceId =
+                  outputs?.service_id?.value ??
+                  outputs?.summary?.value?.serviceId;
+                const clusterId =
+                  outputs?.cluster_id?.value ??
+                  outputs?.summary?.value?.clusterId;
+                const logGroup =
+                  outputs?.log_group?.value ??
+                  outputs?.summary?.value?.logGroup;
 
-                    <Typography variant="body2" color="text.secondary">
-                      Created: {dep.createdAt}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              ))}
+                return (
+                  <Card key={dep.id}>
+                    <CardContent>
+                      <Typography variant="subtitle1">
+                        Deployment #{dep.id} – {dep.blueprintKey} @ {dep.version}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Environment ID: {dep.environmentId}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Deployment status: {dep.status}
+                      </Typography>
+
+                      {dep.lastRunId && (
+                        <Typography variant="body2" color="text.secondary">
+                          Last run: #{dep.lastRunId} (
+                          {dep.lastRunStatus ?? "unknown"})
+                        </Typography>
+                      )}
+                      {dep.lastRunStartedAt && (
+                        <Typography variant="body2" color="text.secondary">
+                          Last run started: {dep.lastRunStartedAt}
+                        </Typography>
+                      )}
+                      {dep.lastRunFinishedAt && (
+                        <Typography variant="body2" color="text.secondary">
+                          Last run finished: {dep.lastRunFinishedAt}
+                        </Typography>
+                      )}
+
+                      {serviceId && (
+                        <Typography variant="body2" color="text.secondary">
+                          Service ARN: {serviceId}
+                        </Typography>
+                      )}
+                      {clusterId && (
+                        <Typography variant="body2" color="text.secondary">
+                          Cluster ARN: {clusterId}
+                        </Typography>
+                      )}
+                      {logGroup && (
+                        <Typography variant="body2" color="text.secondary">
+                          Log group: {logGroup}
+                        </Typography>
+                      )}
+
+                      <Typography variant="body2" color="text.secondary">
+                        Created: {dep.createdAt}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </Stack>
           )}
 

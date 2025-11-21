@@ -5,9 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
-	"time"
-
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	redis "github.com/redis/go-redis/v9"
@@ -24,6 +23,9 @@ type DeploymentSummary struct {
 	LastRunStatus     *string    `json:"lastRunStatus,omitempty"`
 	LastRunStartedAt  *time.Time `json:"lastRunStartedAt,omitempty"`
 	LastRunFinishedAt *time.Time `json:"lastRunFinishedAt,omitempty"`
+
+	// Raw terraform outputs JSON (terraform output -json)
+	OutputsJSON json.RawMessage `json:"outputsJson,omitempty"`
 }
 
 // Dependencies for handlers
@@ -203,6 +205,7 @@ func (d *ServerDeps) ListDeployments(c *gin.Context) {
             dep.environment_id,
             dep.status,
             dep.created_at,
+            dep.outputs_json,
             lr.id AS last_run_id,
             lr.status AS last_run_status,
             lr.started_at AS last_run_started_at,
@@ -237,6 +240,7 @@ func (d *ServerDeps) ListDeployments(c *gin.Context) {
 		var lastRunStatus sql.NullString
 		var lastRunStartedAt sql.NullTime
 		var lastRunFinishedAt sql.NullTime
+		var outputsRaw sql.NullString
 
 		if err := rows.Scan(
 			&s.ID,
@@ -245,6 +249,7 @@ func (d *ServerDeps) ListDeployments(c *gin.Context) {
 			&s.EnvironmentID,
 			&s.Status,
 			&s.CreatedAt,
+			&outputsRaw,
 			&lastRunID,
 			&lastRunStatus,
 			&lastRunStartedAt,
@@ -269,6 +274,9 @@ func (d *ServerDeps) ListDeployments(c *gin.Context) {
 		if lastRunFinishedAt.Valid {
 			t := lastRunFinishedAt.Time
 			s.LastRunFinishedAt = &t
+		}
+		if outputsRaw.Valid {
+			s.OutputsJSON = json.RawMessage(outputsRaw.String)
 		}
 
 		list = append(list, s)

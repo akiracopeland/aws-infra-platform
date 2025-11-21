@@ -88,7 +88,7 @@ func main() {
 			log.Printf("failed to mark run %d running: %v", job.RunID, err)
 		}
 
-		if err := handleJob(ctx, &job); err != nil {
+		if err := handleJob(ctx, db, &job); err != nil {
 			log.Printf("job %d failed: %v", job.RunID, err)
 			if err2 := markRunFailed(ctx, db, job.RunID, err.Error()); err2 != nil {
 				log.Printf("failed to mark run %d failed: %v", job.RunID, err2)
@@ -102,12 +102,33 @@ func main() {
 	}
 }
 
-func handleJob(ctx context.Context, job *Job) error {
+// handleJob now has access to the DB so we can persist outputs on apply
+func handleJob(ctx context.Context, db *sql.DB, job *Job) error {
 	switch job.Action {
 	case "plan":
 		return runTerraformPlan(ctx, job)
+
 	case "apply":
-		return runTerraformApply(ctx, job)
+		// 1) Run apply
+		if err := runTerraformApply(ctx, job); err != nil {
+			return err
+		}
+
+		// 2) Best-effort: capture terraform outputs
+		outputsJSON, err := captureTerraformOutputs(ctx, job)
+		if err != nil {
+			log.Printf("run %d: terraform apply succeeded but failed to capture outputs: %v", job.RunID, err)
+			// Do not fail the run just because outputs capture failed
+			return nil
+		}
+
+		// 3) Persist outputs into deployments.outputs_json via the run → deployment relation
+		if err := persistOutputsForRun(ctx, db, job.RunID, outputsJSON); err != nil {
+			log.Printf("run %d: failed to persist outputs: %v", job.RunID, err)
+		}
+
+		return nil
+
 	default:
 		log.Printf("unsupported action %q, skipping", job.Action)
 		return nil
@@ -199,6 +220,69 @@ func runTerraformApply(ctx context.Context, job *Job) error {
 	args := append([]string{"apply", "-input=false", "-auto-approve", "-no-color"}, varArgs...)
 	if err := runTerraformCmd(tctx, modulePath, env, args...); err != nil {
 		return fmt.Errorf("terraform apply failed: %w", err)
+	}
+
+	return nil
+}
+
+// captureTerraformOutputs runs `terraform output -json` in the module
+// directory using the same assumed role and returns the raw JSON bytes.
+func captureTerraformOutputs(ctx context.Context, job *Job) ([]byte, error) {
+	modulePath, err := modulePathFor(job.BlueprintKey)
+	if err != nil {
+		return nil, err
+	}
+
+	creds, err := assumeRoleForJob(ctx, job)
+	if err != nil {
+		return nil, fmt.Errorf("assume role for outputs failed: %w", err)
+	}
+
+	env := []string{
+		"AWS_ACCESS_KEY_ID=" + creds.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY=" + creds.SecretAccessKey,
+		"AWS_SESSION_TOKEN=" + creds.SessionToken,
+		"AWS_REGION=" + creds.Region,
+	}
+
+	tctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	args := []string{"-chdir=" + modulePath, "output", "-json"}
+	cmd := exec.CommandContext(tctx, "terraform", args...)
+	cmd.Env = append(os.Environ(), env...)
+
+	log.Printf("exec: terraform %v", args)
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("terraform output -json failed: %w", err)
+	}
+
+	return out, nil
+}
+
+// persistOutputsForRun finds the deployment for the given run and updates
+// deployments.outputs_json with the given JSON blob.
+func persistOutputsForRun(ctx context.Context, db *sql.DB, runID int64, outputsJSON []byte) error {
+	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var deploymentID int64
+	if err := db.QueryRowContext(ctx2,
+		"SELECT deployment_id FROM runs WHERE id = ?",
+		runID,
+	).Scan(&deploymentID); err != nil {
+		return fmt.Errorf("lookup deployment_id for run %d: %w", runID, err)
+	}
+
+	_, err := db.ExecContext(ctx2,
+		"UPDATE deployments SET outputs_json = ? WHERE id = ?",
+		string(outputsJSON),
+		deploymentID,
+	)
+	if err != nil {
+		return fmt.Errorf("update deployments.outputs_json for deployment %d: %w", deploymentID, err)
 	}
 
 	return nil
