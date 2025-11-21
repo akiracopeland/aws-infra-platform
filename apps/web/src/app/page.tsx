@@ -41,6 +41,19 @@ type RunStatusResponse = {
   summary?: string;
 };
 
+type DeploymentSummary = {
+  id: number;
+  blueprintKey: string;
+  version: string;
+  environmentId: number;
+  status: string;
+  createdAt: string;
+  lastRunId?: number;
+  lastRunStatus?: string;
+  lastRunStartedAt?: string;
+  lastRunFinishedAt?: string;
+};
+
 export default function Home() {
   const [image, setImage] = useState("nginx:alpine");
   const [serviceName, setServiceName] = useState("demo-service");
@@ -67,6 +80,11 @@ export default function Home() {
   const [runStatus, setRunStatus] = useState<RunStatusResponse | null>(null);
   const [runStatusError, setRunStatusError] = useState<string | null>(null);
   const [runStatusLoading, setRunStatusLoading] = useState(false);
+
+  // Deployments list state
+  const [deployments, setDeployments] = useState<DeploymentSummary[]>([]);
+  const [deploymentsError, setDeploymentsError] = useState<string | null>(null);
+  const [loadingDeployments, setLoadingDeployments] = useState(false);
 
   async function handleDeploy() {
     setLoading(true);
@@ -112,6 +130,9 @@ export default function Home() {
 
       const json = (await res.json()) as DeployResponse;
       setResult(json);
+
+      // Refresh deployments list after a new deployment
+      void loadDeployments();
     } catch (err: any) {
       setError(err.message || "Unknown error");
     } finally {
@@ -215,6 +236,29 @@ export default function Home() {
       setRunStatusError(err.message || "Failed to fetch run status");
     } finally {
       setRunStatusLoading(false);
+    }
+  }
+
+  async function loadDeployments() {
+    setLoadingDeployments(true);
+    setDeploymentsError(null);
+
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE}/v1/deployments`
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API error ${res.status}: ${text}`);
+      }
+
+      const json = (await res.json()) as DeploymentSummary[];
+      setDeployments(json);
+    } catch (err: any) {
+      setDeploymentsError(err.message || "Failed to load deployments");
+    } finally {
+      setLoadingDeployments(false);
     }
   }
 
@@ -416,7 +460,7 @@ export default function Home() {
         </Box>
 
         {/* Run Status section */}
-        <Box sx={{ mt: 6, mb: 8 }}>
+        <Box sx={{ mt: 6 }}>
           <Typography variant="h5" gutterBottom>
             Run Status
           </Typography>
@@ -482,6 +526,80 @@ export default function Home() {
               </Card>
             )}
           </Box>
+        </Box>
+
+        {/* Deployments history section */}
+        <Box sx={{ mt: 6, mb: 8 }}>
+          <Typography variant="h5" gutterBottom>
+            Deployments
+          </Typography>
+
+          <Button
+            variant="outlined"
+            onClick={loadDeployments}
+            disabled={loadingDeployments}
+          >
+            {loadingDeployments ? "Loading..." : "Load Deployments"}
+          </Button>
+
+          {deploymentsError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {deploymentsError}
+            </Alert>
+          )}
+
+          {deployments.length > 0 && (
+            <Stack spacing={2} sx={{ mt: 2 }}>
+              {deployments.map((dep) => (
+                <Card key={dep.id}>
+                  <CardContent>
+                    <Typography variant="subtitle1">
+                      Deployment #{dep.id} – {dep.blueprintKey} @ {dep.version}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Environment ID: {dep.environmentId}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Deployment status: {dep.status}
+                    </Typography>
+
+                    {dep.lastRunId && (
+                      <Typography variant="body2" color="text.secondary">
+                        Last run: #{dep.lastRunId} ({dep.lastRunStatus ?? "unknown"})
+                      </Typography>
+                    )}
+                    {dep.lastRunStartedAt && (
+                      <Typography variant="body2" color="text.secondary">
+                        Last run started: {dep.lastRunStartedAt}
+                      </Typography>
+                    )}
+                    {dep.lastRunFinishedAt && (
+                      <Typography variant="body2" color="text.secondary">
+                        Last run finished: {dep.lastRunFinishedAt}
+                      </Typography>
+                    )}
+
+                    <Typography variant="body2" color="text.secondary">
+                      Created: {dep.createdAt}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              ))}
+            </Stack>
+          )}
+
+          {deployments.length === 0 &&
+            !deploymentsError &&
+            !loadingDeployments && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 2 }}
+              >
+                No deployments loaded yet. Click &quot;Load Deployments&quot; to
+                fetch history.
+              </Typography>
+            )}
         </Box>
       </Container>
     </>

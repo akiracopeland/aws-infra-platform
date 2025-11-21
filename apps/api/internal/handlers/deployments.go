@@ -5,10 +5,24 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	redis "github.com/redis/go-redis/v9"
 )
+
+type DeploymentSummary struct {
+	ID                int64      `json:"id"`
+	BlueprintKey      string     `json:"blueprintKey"`
+	Version           string     `json:"version"`
+	EnvironmentID     int64      `json:"environmentId"`
+	Status            string     `json:"status"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	LastRunID         *int64     `json:"lastRunId,omitempty"`
+	LastRunStatus     *string    `json:"lastRunStatus,omitempty"`
+	LastRunStartedAt  *time.Time `json:"lastRunStartedAt,omitempty"`
+	LastRunFinishedAt *time.Time `json:"lastRunFinishedAt,omitempty"`
+}
 
 // Dependencies for handlers
 type ServerDeps struct {
@@ -158,4 +172,98 @@ func (d *ServerDeps) CreateDeployment(c *gin.Context) {
 		"runId":        runID,
 		"status":       "queued",
 	})
+}
+
+// GET /v1/deployments
+// For now: environment_id is hard-coded to 1 (dev)
+func (d *ServerDeps) ListDeployments(c *gin.Context) {
+	const envID int64 = 1
+
+	ctx := c.Request.Context()
+
+	rows, err := d.DB.QueryContext(ctx, `
+        SELECT
+            dep.id,
+            bp.blueprint_key,
+            bp.version,
+            dep.environment_id,
+            dep.status,
+            dep.created_at,
+            lr.id AS last_run_id,
+            lr.status AS last_run_status,
+            lr.started_at AS last_run_started_at,
+            lr.finished_at AS last_run_finished_at
+        FROM deployments dep
+        JOIN blueprints bp ON dep.blueprint_id = bp.id
+        LEFT JOIN (
+            SELECT r1.*
+            FROM runs r1
+            JOIN (
+                SELECT deployment_id, MAX(id) AS max_id
+                FROM runs
+                GROUP BY deployment_id
+            ) mr
+            ON mr.deployment_id = r1.deployment_id AND mr.max_id = r1.id
+        ) lr
+        ON lr.deployment_id = dep.id
+        WHERE dep.environment_id = ?
+        ORDER BY dep.created_at DESC
+    `, envID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query deployments"})
+		return
+	}
+	defer rows.Close()
+
+	var list []DeploymentSummary
+
+	for rows.Next() {
+		var s DeploymentSummary
+		var lastRunID sql.NullInt64
+		var lastRunStatus sql.NullString
+		var lastRunStartedAt sql.NullTime
+		var lastRunFinishedAt sql.NullTime
+
+		if err := rows.Scan(
+			&s.ID,
+			&s.BlueprintKey,
+			&s.Version,
+			&s.EnvironmentID,
+			&s.Status,
+			&s.CreatedAt,
+			&lastRunID,
+			&lastRunStatus,
+			&lastRunStartedAt,
+			&lastRunFinishedAt,
+		); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan deployments"})
+			return
+		}
+
+		if lastRunID.Valid {
+			id := lastRunID.Int64
+			s.LastRunID = &id
+		}
+		if lastRunStatus.Valid {
+			status := lastRunStatus.String
+			s.LastRunStatus = &status
+		}
+		if lastRunStartedAt.Valid {
+			t := lastRunStartedAt.Time
+			s.LastRunStartedAt = &t
+		}
+		if lastRunFinishedAt.Valid {
+			t := lastRunFinishedAt.Time
+			s.LastRunFinishedAt = &t
+		}
+
+		list = append(list, s)
+	}
+
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "rows error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, list)
 }

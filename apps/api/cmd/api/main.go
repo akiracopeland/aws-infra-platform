@@ -62,7 +62,10 @@ func main() {
 	api := r.Group("/v1")
 	{
 		api.POST("/deployments", deps.CreateDeployment)
+		api.GET("/deployments", deps.ListDeployments)
+
 		api.GET("/runs/:id", deps.GetRun)
+
 		api.POST("/connections/aws", deps.CreateAWSConnection)
 		api.GET("/connections/aws", deps.ListAWSConnections)
 	}
