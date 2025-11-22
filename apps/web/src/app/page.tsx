@@ -198,6 +198,48 @@ export default function Home() {
     }
   }
 
+  async function handleDestroy(deploymentId: number) {
+    setError(null);
+    setResult(null);
+
+    const conn = connections.find((c) => c.id === selectedConnectionId);
+    if (!conn) {
+      setError("Please select an AWS connection before destroying.");
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE}/v1/deployments/${deploymentId}/destroy`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            aws: {
+              roleArn: conn.roleArn,
+              externalId: conn.externalId,
+              region: conn.region,
+            },
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API error ${res.status}: ${text}`);
+      }
+
+      const json = (await res.json()) as DeployResponse;
+      setResult(json);
+
+      // Refresh list
+      void loadDeployments();
+    } catch (err: any) {
+        setError(err.message || "Failed to queue destroy");
+    }
+  }
+
+
   async function loadConnections() {
     setLoadingConnections(true);
     setConnectionsError(null);
@@ -644,6 +686,26 @@ export default function Home() {
                       <Typography variant="body2" color="text.secondary">
                         Deployment status: {dep.status}
                       </Typography>
+
+                      <Box sx={{ mt: 1 }}>
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          size="small"
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Destroy deployment #${dep.id}? This will run 'terraform destroy' for its resources.`
+                              )
+                            ) {
+                              void handleDestroy(dep.id);
+                            }
+                          }}
+                          disabled={dep.status === "destroying" || dep.status === "destroyed"}
+                        >
+                          Destroy deployment
+                        </Button>
+                      </Box>
 
                       {dep.lastRunId && (
                         <Typography variant="body2" color="text.secondary">

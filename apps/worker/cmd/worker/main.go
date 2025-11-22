@@ -114,6 +114,12 @@ func handleJob(ctx context.Context, db *sql.DB, job *Job) error {
 			return err
 		}
 
+	case "destroy":
+		// 1) Run destroy
+		if err := runTerraformDestroy(ctx, job); err != nil {
+			return err
+		}
+
 		// 2) Best-effort: capture terraform outputs
 		outputsJSON, err := captureTerraformOutputs(ctx, job)
 		if err != nil {
@@ -133,6 +139,7 @@ func handleJob(ctx context.Context, db *sql.DB, job *Job) error {
 		log.Printf("unsupported action %q, skipping", job.Action)
 		return nil
 	}
+	return nil
 }
 
 func runTerraformPlan(ctx context.Context, job *Job) error {
@@ -220,6 +227,51 @@ func runTerraformApply(ctx context.Context, job *Job) error {
 	args := append([]string{"apply", "-input=false", "-auto-approve", "-no-color"}, varArgs...)
 	if err := runTerraformCmd(tctx, modulePath, env, args...); err != nil {
 		return fmt.Errorf("terraform apply failed: %w", err)
+	}
+
+	return nil
+}
+
+func runTerraformDestroy(ctx context.Context, job *Job) error {
+	modulePath, err := modulePathFor(job.BlueprintKey)
+	if err != nil {
+		return err
+	}
+
+	// Assume role for this job (using values from job.AWS)
+	creds, err := assumeRoleForJob(ctx, job)
+	if err != nil {
+		return fmt.Errorf("assume role failed: %w", err)
+	}
+
+	env := []string{
+		"AWS_ACCESS_KEY_ID=" + creds.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY=" + creds.SecretAccessKey,
+		"AWS_SESSION_TOKEN=" + creds.SessionToken,
+		"AWS_REGION=" + creds.Region,
+	}
+
+	log.Printf("run %d: running terraform destroy in %s as assumed role in region %s", job.RunID, modulePath, creds.Region)
+
+	// Context with timeout for terraform commands
+	tctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	// 1) terraform init
+	if err := runTerraformCmd(tctx, modulePath, env, "init", "-input=false", "-no-color"); err != nil {
+		return fmt.Errorf("terraform init failed: %w", err)
+	}
+
+	// Build -var arguments from job.Inputs (so state/vars line up, though destroy mainly cares about state)
+	varArgs := []string{}
+	for k, v := range job.Inputs {
+		varArgs = append(varArgs, "-var", fmt.Sprintf("%s=%v", k, v))
+	}
+
+	// 2) terraform destroy -auto-approve
+	args := append([]string{"destroy", "-input=false", "-auto-approve", "-no-color"}, varArgs...)
+	if err := runTerraformCmd(tctx, modulePath, env, args...); err != nil {
+		return fmt.Errorf("terraform destroy failed: %w", err)
 	}
 
 	return nil

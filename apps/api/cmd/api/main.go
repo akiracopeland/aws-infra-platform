@@ -64,6 +64,8 @@ func main() {
 		api.POST("/deployments", deps.CreateDeployment)
 		api.GET("/deployments", deps.ListDeployments)
 
+		api.POST("/deployments/:id/destroy", deps.DestroyDeployment)
+
 		api.GET("/runs/:id", deps.GetRun)
 
 		api.POST("/connections/aws", deps.CreateAWSConnection)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -46,6 +47,14 @@ type CreateDeploymentReq struct {
 		Region     string `json:"region" binding:"required"`
 	} `json:"aws"`
 	Action string `json:"action"` // "plan" or "apply" (optional, defaults to "plan")
+}
+
+type DestroyDeploymentReq struct {
+	AWS struct {
+		RoleArn    string `json:"roleArn" binding:"required"`
+		ExternalID string `json:"externalId" binding:"required"`
+		Region     string `json:"region" binding:"required"`
+	} `json:"aws"`
 }
 
 func (d *ServerDeps) CreateDeployment(c *gin.Context) {
@@ -288,4 +297,104 @@ func (d *ServerDeps) ListDeployments(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, list)
+}
+
+func (d *ServerDeps) DestroyDeployment(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Parse deployment ID from URL
+	deploymentIDStr := c.Param("id")
+	var deploymentID int64
+	if _, err := fmt.Sscan(deploymentIDStr, &deploymentID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid deployment id"})
+		return
+	}
+
+	var req DestroyDeploymentReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Look up blueprint + inputs for this deployment
+	var (
+		blueprintKey string
+		version      string
+		inputsJSON   string
+	)
+
+	err := d.DB.QueryRowContext(ctx, `
+        SELECT bp.blueprint_key, bp.version, dep.inputs_json
+        FROM deployments dep
+        JOIN blueprints bp ON dep.blueprint_id = bp.id
+        WHERE dep.id = ?
+    `, deploymentID).Scan(&blueprintKey, &version, &inputsJSON)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "deployment not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load deployment: " + err.Error()})
+		return
+	}
+
+	var inputs map[string]any
+	if err := json.Unmarshal([]byte(inputsJSON), &inputs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decode inputs_json"})
+		return
+	}
+
+	// Insert a new run with action='destroy'
+	res, err := d.DB.ExecContext(ctx, `
+        INSERT INTO runs (
+            deployment_id,
+            action,
+            status,
+            artifacts_uri,
+            summary,
+            started_at,
+            finished_at
+        ) VALUES (?, 'destroy', 'queued', NULL, NULL, NULL, NULL)
+    `, deploymentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to insert destroy run: " + err.Error()})
+		return
+	}
+
+	runID, err := res.LastInsertId()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get run id"})
+		return
+	}
+
+	// Enqueue job (same shape as CreateDeployment)
+	job := map[string]any{
+		"run_id":        runID,
+		"action":        "destroy",
+		"blueprint_key": blueprintKey,
+		"version":       version,
+		"inputs":        inputs,
+		"aws": map[string]string{
+			"roleArn":    req.AWS.RoleArn,
+			"externalId": req.AWS.ExternalID,
+			"region":     req.AWS.Region,
+		},
+	}
+
+	payload, err := json.Marshal(job)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode job"})
+		return
+	}
+
+	if err := d.RDB.RPush(context.Background(), "aip:jobs", payload).Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue job: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"deploymentId": deploymentID,
+		"runId":        runID,
+		"status":       "queued",
+	})
 }
