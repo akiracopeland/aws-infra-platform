@@ -66,7 +66,8 @@ export default function Home() {
   const [connections, setConnections] = useState<AwsConnection[]>([]);
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
   const [loadingConnections, setLoadingConnections] = useState(false);
-  const [selectedConnectionId, setSelectedConnectionId] = useState<number | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] =
+    useState<number | null>(null);
 
   // Add-connection form state
   const [newRoleArn, setNewRoleArn] = useState("");
@@ -74,8 +75,10 @@ export default function Home() {
   const [newRegion, setNewRegion] = useState("ap-northeast-1");
   const [newNickname, setNewNickname] = useState("");
   const [creatingConnection, setCreatingConnection] = useState(false);
-  const [createConnectionError, setCreateConnectionError] = useState<string | null>(null);
-  const [createConnectionSuccess, setCreateConnectionSuccess] = useState<string | null>(null);
+  const [createConnectionError, setCreateConnectionError] =
+    useState<string | null>(null);
+  const [createConnectionSuccess, setCreateConnectionSuccess] =
+    useState<string | null>(null);
 
   // Run status UI state
   const [runIdQuery, setRunIdQuery] = useState("");
@@ -87,6 +90,15 @@ export default function Home() {
   const [deployments, setDeployments] = useState<DeploymentSummary[]>([]);
   const [deploymentsError, setDeploymentsError] = useState<string | null>(null);
   const [loadingDeployments, setLoadingDeployments] = useState(false);
+
+  // Laravel app deploy state
+  const [laravelServiceName, setLaravelServiceName] =
+    useState("laravel-app");
+  const [laravelImage, setLaravelImage] = useState("nginx:alpine");
+  const [laravelDbName, setLaravelDbName] = useState("laravel_app");
+  const [laravelDbUser, setLaravelDbUser] = useState("laravel");
+  const [laravelDbPassword, setLaravelDbPassword] =
+    useState("changeme"); // dev only
 
   async function handleDeploy() {
     setLoading(true);
@@ -198,6 +210,65 @@ export default function Home() {
     }
   }
 
+  async function handleLaravelApply() {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+
+    const conn = connections.find((c) => c.id === selectedConnectionId);
+    if (!conn) {
+      setError("Please select an AWS connection before deploying a Laravel app.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE}/v1/deployments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            blueprintKey: "laravel-app",
+            version: "1.0.0",
+            environmentId: 1,
+            action: "apply",
+            inputs: {
+              // NOTE: these keys match variables in laravel-app/main.tf
+              service_name: laravelServiceName,
+              image: laravelImage,
+              cpu: 256,
+              memory: 512,
+              db_name: laravelDbName,
+              db_username: laravelDbUser,
+              db_password: laravelDbPassword,
+            },
+            aws: {
+              roleArn: conn.roleArn,
+              externalId: conn.externalId,
+              region: conn.region,
+            },
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API error ${res.status}: ${text}`);
+      }
+
+      const json = (await res.json()) as DeployResponse;
+      setResult(json);
+
+      // Refresh deployments list after a new deployment
+      void loadDeployments();
+    } catch (err: any) {
+      setError(err.message || "Failed to queue Laravel app deployment");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleDestroy(deploymentId: number) {
     setError(null);
     setResult(null);
@@ -235,10 +306,9 @@ export default function Home() {
       // Refresh list
       void loadDeployments();
     } catch (err: any) {
-        setError(err.message || "Failed to queue destroy");
+      setError(err.message || "Failed to queue destroy");
     }
   }
-
 
   async function loadConnections() {
     setLoadingConnections(true);
@@ -370,7 +440,7 @@ export default function Home() {
           AWSInfraPlatform – ECS Service Deploy (MVP)
         </Typography>
 
-        {/* Deploy form */}
+        {/* ECS Service deploy form */}
         <Box
           component="form"
           noValidate
@@ -406,6 +476,63 @@ export default function Home() {
             >
               {loading ? "Applying..." : "Apply ECS Service"}
             </Button>
+          </Box>
+        </Box>
+
+        {/* Laravel App deploy form */}
+        <Box sx={{ mt: 6 }}>
+          <Typography variant="h5" gutterBottom>
+            Laravel App (ECS + RDS)
+          </Typography>
+
+          <Box
+            component="form"
+            noValidate
+            sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 2 }}
+          >
+            <TextField
+              label="Service Name"
+              value={laravelServiceName}
+              onChange={(e) => setLaravelServiceName(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Container Image"
+              value={laravelImage}
+              onChange={(e) => setLaravelImage(e.target.value)}
+              helperText="Docker image that runs your Laravel app (e.g. ECR image)"
+              fullWidth
+            />
+            <TextField
+              label="DB Name"
+              value={laravelDbName}
+              onChange={(e) => setLaravelDbName(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="DB Username"
+              value={laravelDbUser}
+              onChange={(e) => setLaravelDbUser(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="DB Password"
+              type="password"
+              value={laravelDbPassword}
+              onChange={(e) => setLaravelDbPassword(e.target.value)}
+              fullWidth
+            />
+
+            <Box sx={{ display: "flex", gap: 2 }}>
+              <Button
+                variant="contained"
+                color="secondary"
+                onClick={handleLaravelApply}
+                disabled={loading}
+              >
+                {loading ? "Deploying..." : "Apply Laravel App"}
+              </Button>
+            </Box>
           </Box>
         </Box>
 
@@ -674,11 +801,15 @@ export default function Home() {
                   outputs?.log_group?.value ??
                   outputs?.summary?.value?.logGroup;
 
+                const dbEndpoint = outputs?.db_endpoint?.value;
+                const dbName = outputs?.db_name?.value;
+
                 return (
                   <Card key={dep.id}>
                     <CardContent>
                       <Typography variant="subtitle1">
-                        Deployment #{dep.id} – {dep.blueprintKey} @ {dep.version}
+                        Deployment #{dep.id} – {dep.blueprintKey} @{" "}
+                        {dep.version}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         Environment ID: {dep.environmentId}
@@ -701,7 +832,10 @@ export default function Home() {
                               void handleDestroy(dep.id);
                             }
                           }}
-                          disabled={dep.status === "destroying" || dep.status === "destroyed"}
+                          disabled={
+                            dep.status === "destroying" ||
+                            dep.status === "destroyed"
+                          }
                         >
                           Destroy deployment
                         </Button>
@@ -737,6 +871,17 @@ export default function Home() {
                       {logGroup && (
                         <Typography variant="body2" color="text.secondary">
                           Log group: {logGroup}
+                        </Typography>
+                      )}
+
+                      {dbEndpoint && (
+                        <Typography variant="body2" color="text.secondary">
+                          DB endpoint: {dbEndpoint}
+                        </Typography>
+                      )}
+                      {dbName && (
+                        <Typography variant="body2" color="text.secondary">
+                          DB name: {dbName}
                         </Typography>
                       )}
 

@@ -361,12 +361,13 @@ func runTerraformCmd(ctx context.Context, modulePath string, extraEnv []string, 
 }
 
 func modulePathFor(blueprintKey string) (string, error) {
-	// Worker is run from apps/worker, so modules are at ../../infra/modules/<name>
 	const modulesRoot = "../../infra/modules"
 
 	switch blueprintKey {
 	case "ecs-service":
 		return filepath.Join(modulesRoot, "ecs-service"), nil
+	case "laravel-app":
+		return filepath.Join(modulesRoot, "laravel-app"), nil
 	default:
 		return "", fmt.Errorf("unsupported blueprint %q", blueprintKey)
 	}

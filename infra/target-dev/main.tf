@@ -58,6 +58,12 @@ resource "aws_iam_role_policy_attachment" "cw_logs_full" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
 }
 
+resource "aws_iam_role_policy_attachment" "rds_full" {
+  role       = aws_iam_role.aip_target_deploy.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonRDSFullAccess"
+}
+
+
 # You may also need IAM pass-role and load balancer permissions later;
 # we can add those as we flesh out the ECS module.
 
